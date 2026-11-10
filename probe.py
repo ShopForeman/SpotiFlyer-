@@ -17,7 +17,8 @@ for u in [f"https://api.spotify.com/v1/playlists/{pid}?fields=name,tracks.total,
     s,b=get(u,A); print(u,s,b[:400].replace("\n"," "))
 # pathfinder graphql
 for pl in [pid]:
-    q={"operationName":"fetchPlaylist","variables":json.dumps({"uri":f"spotify:playlist:{pl}","offset":100,"limit":25}),
+    q={"operationName":"fetchPlaylist","variables":json.dumps({"uri":f"spotify:playlist:{pl}","offset":100,"limit":100}),
        "extensions":json.dumps({"persistedQuery":{"version":1,"sha256Hash":"19ff1327c29e99c208c86d7a9d8f1929cfdf3d3202a0ff4253c821f1901aa94d"}})}
     import urllib.parse
-    s,b=get("https://api-partner.spotify.com/pathfinder/v1/query?"+urllib.parse.urlencode(q),A); print("pathfinder",s,b[:500].replace("\n"," "))
+    s,b=get("https://api-partner.spotify.com/pathfinder/v1/query?"+urllib.parse.urlencode(q),A); print("pathfinder",s)
+    j=json.loads(b); c=j["data"]["playlistV2"]["content"]; print("total",c.get("totalCount"),"n",len(c["items"]),"pagingInfo",c.get("pagingInfo")); print(json.dumps(c["items"][0]["itemV2"],indent=1)[:3000])

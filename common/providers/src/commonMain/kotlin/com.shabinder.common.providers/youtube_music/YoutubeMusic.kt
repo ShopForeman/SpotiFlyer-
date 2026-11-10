@@ -42,6 +42,7 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -77,6 +78,11 @@ class YoutubeMusic constructor(
                 if ((preferredQuality.kbps.toIntOrNull()
                         ?: 0) > 192
                 ) AudioQuality.KBPS192 else preferredQuality
+            // FlyerPlus: 0 YouTube's own player API (works on phones; old methods kept as fallbacks)
+            SuspendableEvent { youtubeProvider.fetchPlayerAudioLink(videoID) }.map { (url, quality) ->
+                Triple(url, quality, AudioFormat.MP4)
+            }.flatMapError { playerError ->
+            errorReportBuilder?.appendPadded("YT Player API Failed for $videoID:", playerError.stackTraceToString())
             // 1 Try getting Link from Yt1s
             youtubeMp3.getMp3DownloadLink(videoID, optimalQuality).map {
                 Triple(it, optimalQuality, AudioFormat.MP3)
@@ -94,6 +100,7 @@ class YoutubeMusic constructor(
                     Triple(URL, quality, AudioFormat.MP4)
                 }
             }
+            }
         }
     }
 
@@ -110,7 +117,7 @@ class YoutubeMusic constructor(
                 ?: throw SpotiFlyerException.NoMatchFound(trackDetails.title)
         }
 
-    private suspend fun getYTTracks(query: String): SuspendableEvent<List<YoutubeTrack>, Throwable> =
+    internal suspend fun getYTTracks(query: String): SuspendableEvent<List<YoutubeTrack>, Throwable> =
         getYoutubeMusicResponse(query).map { youtubeResponseData ->
             val youtubeTracks = mutableListOf<YoutubeTrack>()
             val responseObj = Json.parseToJsonElement(youtubeResponseData)
@@ -196,6 +203,7 @@ class YoutubeMusic constructor(
                 */
 
                 for (result in resultBlocks) {
+                    if (result.size < 2) continue // FlyerPlus: needs details + play link
 
                     // Blindly gather available details
                     val availableDetails = mutableListOf<String>()
@@ -236,33 +244,20 @@ class YoutubeMusic constructor(
                     ! Filter Out non-Song/Video results and incomplete results here itself
                     ! From what we know about detail order, note that [1] - indicate result type
                     */
-                    if (availableDetails.size == 5 && availableDetails[1] in listOf(
-                            "Song",
-                            "Video"
+                    // FlyerPlus: Songs-filter rows are [name, artist(s)..., album, m:ss, plays] (no type label)
+                    val duration = availableDetails.firstOrNull { it.matches(Regex("""\d{1,2}:\d{2}""")) }
+                    val videoId: String? =
+                        (result.last() as? JsonObject)?.get("watchEndpoint")?.jsonObject?.get("videoId")?.jsonPrimitive?.content
+                    if (duration != null && videoId != null && availableDetails.size >= 3) {
+                        youtubeTracks.add(
+                            YoutubeTrack(
+                                name = availableDetails[0],
+                                type = "Song",
+                                artist = availableDetails[1],
+                                duration = duration,
+                                videoId = videoId
+                            )
                         )
-                    ) {
-
-                        // skip if result is in hours instead of minutes (no song is that long)
-                        if (availableDetails[4].split(':').size != 2) continue
-
-                        /*
-                        ! grab Video ID
-                        ! this is nested as [playlistEndpoint/watchEndpoint][videoId/playlistId/...]
-                        ! so hardcoding the dict keys for data look up is an ardours process, since
-                        ! the sub-block pattern is fixed even though the key isn't, we just
-                        ! reference the dict keys by index
-                        */
-
-                        val videoId: String? =
-                            result.last().jsonObject["watchEndpoint"]?.jsonObject?.get("videoId")?.jsonPrimitive?.content
-                        val ytTrack = YoutubeTrack(
-                            name = availableDetails[0],
-                            type = availableDetails[1],
-                            artist = availableDetails[2],
-                            duration = availableDetails[4],
-                            videoId = videoId
-                        )
-                        youtubeTracks.add(ytTrack)
                     }
                 }
             }
@@ -358,19 +353,23 @@ class YoutubeMusic constructor(
 
     private suspend fun getYoutubeMusicResponse(query: String): SuspendableEvent<String, Throwable> =
         SuspendableEvent {
-            httpClient.post("${corsApi}https://music.youtube.com/youtubei/v1/search?alt=json&key=$apiKey") {
+            // FlyerPlus: the API key and old client version were retired by YouTube (404); "params" = Songs filter
+            httpClient.post("${corsApi}https://music.youtube.com/youtubei/v1/search?prettyPrint=false") {
                 headers {
                     append(HttpHeaders.ContentType, ContentType.Application.Json.toString())
-                    append("referer", "https://music.youtube.com/search")
+                    append("origin", "https://music.youtube.com")
+                    append("referer", "https://music.youtube.com/")
                 }
                 body = buildJsonObject {
                     putJsonObject("context") {
                         putJsonObject("client") {
                             put("clientName", "WEB_REMIX")
-                            put("clientVersion", "0.1")
+                            put("clientVersion", "1.20251103.01.00")
+                            put("hl", "en")
                         }
                     }
                     put("query", query)
+                    put("params", "EgWKAQIIAWoKEAkQBRAKEAMQBA==")
                 }
             }
         }

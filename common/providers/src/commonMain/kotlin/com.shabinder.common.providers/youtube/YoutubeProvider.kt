@@ -34,6 +34,19 @@ import io.github.shabinder.models.formats.Format
 import io.github.shabinder.models.quality.AudioQuality
 import io.ktor.client.HttpClient
 import io.ktor.client.request.get
+import io.ktor.client.request.header
+import io.ktor.client.request.post
+import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
+import io.ktor.http.contentType
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonObject
 import io.ktor.client.statement.HttpStatement
 import io.ktor.http.HttpStatusCode
 import com.shabinder.common.models.AudioQuality as Quality
@@ -223,6 +236,60 @@ class YoutubeProvider(
             throw ex
 
         return validM4aLink to audioQuality
+    }
+
+    /**
+     * FlyerPlus: audio URL straight from YouTube's player API using app clients that don't
+     * need the web player's signature/PO-token handling. Tries each client in turn.
+     */
+    suspend fun fetchPlayerAudioLink(videoId: String): Pair<String, Quality> {
+        val clients = listOf(
+            Triple(
+                buildJsonObject {
+                    put("clientName", "ANDROID_VR"); put("clientVersion", "1.65.10")
+                    put("deviceMake", "Oculus"); put("deviceModel", "Quest 3")
+                    put("androidSdkVersion", 32); put("osName", "Android"); put("osVersion", "12L"); put("hl", "en")
+                },
+                "com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
+                "28"
+            ),
+            Triple(
+                buildJsonObject {
+                    put("clientName", "IOS"); put("clientVersion", "20.10.4")
+                    put("deviceMake", "Apple"); put("deviceModel", "iPhone16,2")
+                    put("osName", "iPhone"); put("osVersion", "18.3.2.22D82"); put("hl", "en")
+                },
+                "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)",
+                "5"
+            )
+        )
+        val errors = mutableListOf<String>()
+        for ((client, userAgent, clientId) in clients) {
+            val response: String = httpClient.post("https://www.youtube.com/youtubei/v1/player?prettyPrint=false") {
+                header(HttpHeaders.UserAgent, userAgent)
+                header("X-YouTube-Client-Name", clientId)
+                header("X-YouTube-Client-Version", client["clientVersion"]!!.jsonPrimitive.content)
+                contentType(ContentType.Application.Json)
+                body = buildJsonObject {
+                    putJsonObject("context") { put("client", client) }
+                    put("videoId", videoId)
+                    put("contentCheckOk", true)
+                    put("racyCheckOk", true)
+                }
+            }
+            val json = Json.parseToJsonElement(response).jsonObject
+            val best = json["streamingData"]?.jsonObject?.get("adaptiveFormats")?.jsonArray
+                ?.map { it.jsonObject }
+                ?.filter { it["mimeType"]?.jsonPrimitive?.content?.startsWith("audio/mp4") == true && it["url"] != null }
+                ?.maxByOrNull { it["bitrate"]?.jsonPrimitive?.longOrNull ?: 0 }
+            if (best != null) {
+                val bitrate = best["bitrate"]?.jsonPrimitive?.longOrNull ?: 0
+                return best["url"]!!.jsonPrimitive.content to (if (bitrate > 160_000) Quality.KBPS192 else Quality.KBPS128)
+            }
+            val status = json["playabilityStatus"]?.jsonObject
+            errors += "${client["clientName"]}: ${status?.get("status")} ${status?.get("reason")}"
+        }
+        throw SpotiFlyerException.DownloadLinkFetchFailed("YouTube player gave no audio for $videoId (${errors.joinToString()})")
     }
 
     private suspend fun validateLink(link: String): Boolean {

@@ -1,22 +1,23 @@
-import re, json, urllib.request, tarfile, io
+import re, json, urllib.request, urllib.error
 UA={"User-Agent":"Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/130 Mobile Safari/537.36"}
-def get(u):
-    return urllib.request.urlopen(urllib.request.Request(u,headers=UA),timeout=30).read().decode()
-tf=tarfile.open("samples.tgz","w:gz")
-for kind,i in [("playlist","77svwHNhW9x3ezazzBAcFd"),("playlist","37i9dQZF1DX4UtSsGT1Sbe"),("album","4aawyAB9vmqN3uQ7FjRGTy"),("track","11dFghVXANMlKmJXsNCbNl")]:
+def get(u,h={}):
     try:
-        h=get(f"https://open.spotify.com/embed/{kind}/{i}")
-        b=h.encode(); ti=tarfile.TarInfo(f"{kind}_{i}.html"); ti.size=len(b); tf.addfile(ti,io.BytesIO(b))
-        m=re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>',h,re.S)
-        print("==",kind,i,"len",len(h),"nextdata",bool(m))
-        if not m: print(h[:1500]); continue
-        d=json.loads(m.group(1))
-        ent=d["props"]["pageProps"]["state"]["data"]["entity"]
-        tl=ent.get("trackList")
-        print("entity keys",list(ent.keys()))
-        print({k:ent[k] for k in ent if k!="trackList" and k!="visualIdentity"})
-        if tl: print("tracks",len(tl)); print(json.dumps(tl[:2],indent=1))
-        s=d["props"]["pageProps"]["state"].get("settings",{}).get("session",{})
-        print("session keys",list(s.keys()))
-    except Exception as e: print("ERR",kind,i,repr(e))
-tf.close()
+        r=urllib.request.urlopen(urllib.request.Request(u,headers={**UA,**h}),timeout=30); return r.status,r.read().decode()
+    except urllib.error.HTTPError as e: return e.code,e.read().decode()[:300]
+pid="37i9dQZF1DX4UtSsGT1Sbe"
+s,h=get(f"https://open.spotify.com/embed/playlist/{pid}")
+d=json.loads(re.search(r'__NEXT_DATA__" type="application/json">(.*?)</script>',h,re.S).group(1))
+ses=d["props"]["pageProps"]["state"]["settings"]["session"]
+tok=ses["accessToken"]; print("anon",ses["isAnonymous"],"tok len",len(tok or ""))
+A={"Authorization":"Bearer "+tok}
+for u in [f"https://api.spotify.com/v1/playlists/{pid}?fields=name,tracks.total,items.total",
+          f"https://api.spotify.com/v1/playlists/{pid}/tracks?offset=100&limit=5",
+          f"https://api.spotify.com/v1/playlists/{pid}/items?offset=100&limit=5",
+          "https://api.spotify.com/v1/playlists/77svwHNhW9x3ezazzBAcFd/tracks?limit=2"]:
+    s,b=get(u,A); print(u,s,b[:400].replace("\n"," "))
+# pathfinder graphql
+for pl in [pid]:
+    q={"operationName":"fetchPlaylist","variables":json.dumps({"uri":f"spotify:playlist:{pl}","offset":100,"limit":25}),
+       "extensions":json.dumps({"persistedQuery":{"version":1,"sha256Hash":"19ff1327c29e99c208c86d7a9d8f1929cfdf3d3202a0ff4253c821f1901aa94d"}})}
+    import urllib.parse
+    s,b=get("https://api-partner.spotify.com/pathfinder/v1/query?"+urllib.parse.urlencode(q),A); print("pathfinder",s,b[:500].replace("\n"," "))

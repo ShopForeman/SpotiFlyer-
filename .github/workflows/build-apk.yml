@@ -1,0 +1,31 @@
+name: Build FlyerPlus APK
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 11
+      - name: Signing config
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        run: |
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          printf 'storeFileDir=%s\nstorePassword=%s\nkeyAlias=flyerplus\nkeyPassword=%s\n' \
+            "$RUNNER_TEMP/release.jks" "$KEYSTORE_PASSWORD" "$KEYSTORE_PASSWORD" >> local.properties
+      - name: Build
+        run: ./gradlew --no-daemon --stacktrace :android:assembleRelease
+      - name: Rename APK
+        run: mv android/build/outputs/apk/release/*.apk FlyerPlus.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FlyerPlus
+          path: FlyerPlus.apk

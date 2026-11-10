@@ -20,6 +20,7 @@ import com.shabinder.common.core_components.preference_manager.PreferenceManager
 import com.shabinder.common.models.SpotiFlyerException
 import com.shabinder.common.models.event.coroutines.SuspendableEvent
 import com.shabinder.common.models.Actions
+import com.shabinder.common.models.spotify.SPOTIFY_REDIRECT_URI
 import com.shabinder.common.models.spotify.TokenData
 import com.shabinder.common.utils.globalJson
 import io.ktor.client.*
@@ -60,4 +61,43 @@ private val spotifyAuthClient by lazy {
             serializer = KotlinxSerializer(globalJson)
         }
     }
+}
+
+/* FlyerPlus: Spotify sign-in (Authorization Code + PKCE, no client secret needed) */
+
+@SharedImmutable
+private val spotifyUserAuthClient by lazy {
+    HttpClient {
+        install(JsonFeature) {
+            serializer = KotlinxSerializer(globalJson)
+        }
+    }
+}
+
+private suspend fun requestUserToken(vararg form: Pair<String, String>): TokenData =
+    spotifyUserAuthClient.post<TokenData>("https://accounts.spotify.com/api/token") {
+        body = FormDataContent(Parameters.build {
+            append("client_id", PreferenceManager.instance.spotifyCredentials.clientID)
+            form.forEach { (k, v) -> append(k, v) }
+        })
+    }.also { token ->
+        token.refresh_token?.let { PreferenceManager.instance.spotifyRefreshToken = it }
+    }
+
+/** Finishes sign-in after Spotify redirects back with `code`. */
+suspend fun exchangeSpotifyCode(code: String): TokenData {
+    val verifier = PreferenceManager.instance.spotifyPkceVerifier
+        ?: throw IllegalStateException("Sign-in expired, please try again")
+    return requestUserToken(
+        "grant_type" to "authorization_code",
+        "code" to code,
+        "redirect_uri" to SPOTIFY_REDIRECT_URI,
+        "code_verifier" to verifier
+    ).also { PreferenceManager.instance.spotifyPkceVerifier = null }
+}
+
+/** Fresh access token for the signed-in user, or null if not signed in. */
+suspend fun refreshSpotifyUserToken(): TokenData? {
+    val refresh = PreferenceManager.instance.spotifyRefreshToken ?: return null
+    return requestUserToken("grant_type" to "refresh_token", "refresh_token" to refresh)
 }

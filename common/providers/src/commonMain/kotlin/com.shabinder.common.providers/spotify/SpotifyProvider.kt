@@ -20,14 +20,17 @@ import co.touchlab.kermit.Kermit
 import com.shabinder.common.core_components.file_manager.FileManager
 import com.shabinder.common.core_components.file_manager.finalOutputDir
 import com.shabinder.common.core_components.file_manager.getImageCachePath
+import com.shabinder.common.core_components.utils.buildHttpClient
 import com.shabinder.common.core_components.utils.createHttpClient
 import com.shabinder.common.models.*
 import com.shabinder.common.models.event.coroutines.SuspendableEvent
-import com.shabinder.common.models.spotify.PlaylistTrack
 import com.shabinder.common.models.spotify.Source
 import com.shabinder.common.models.spotify.Track
 import com.shabinder.common.providers.spotify.requests.SpotifyRequests
 import com.shabinder.common.providers.spotify.requests.authenticateSpotify
+import com.shabinder.common.providers.spotify.requests.refreshSpotifyUserToken
+import com.shabinder.common.core_components.preference_manager.PreferenceManager
+import kotlinx.datetime.Clock
 import com.shabinder.common.providers.spotify.token_store.TokenStore
 import com.shabinder.common.utils.globalJson
 import io.ktor.client.*
@@ -84,21 +87,55 @@ class SpotifyProvider(
             )
         }
 
-        try {
-            spotifySearch(
-                type,
-                link
-            )
-        } catch (e: Exception) {
-            e.printStackTrace()
-            // Try Reinitialising Client // Handle 401 Token Expiry ,etc Exceptions
-            authenticateSpotifyClient(true)
+        // FlyerPlus: signed-in users go through the official API first (own/collaborative playlists);
+        // everything else, or anything the API can't return, comes from Spotify's public embed page.
+        val apiResult = signedInClient()?.let { client ->
+            httpClientRef.value = client
+            runCatching { spotifySearch(type, link) }
+                .onFailure { logger.d { "Spotify API failed, using public page: $it" } }
+                .getOrNull()
+        }?.takeIf { it.trackList.isNotEmpty() }
 
-            spotifySearch(
-                type,
-                link
-            )
+        apiResult ?: embedSearch(type, link)
+    }
+
+    private val embedClient by lazy { buildHttpClient {} } // plain text client (no JSON feature)
+    private var userClient: HttpClient? = null
+    private var userTokenExpiry = 0L
+
+    private suspend fun signedInClient(): HttpClient? {
+        if (PreferenceManager.instance.spotifyRefreshToken == null) return null
+        val now = Clock.System.now().epochSeconds
+        if (userClient == null || now >= userTokenExpiry) {
+            val token = runCatching { refreshSpotifyUserToken() }
+                .onFailure { logger.d { "Spotify sign-in refresh failed: $it" } }
+                .getOrNull()?.access_token ?: return null
+            userTokenExpiry = now + 3000 // tokens last 3600s
+            userClient = HttpClient {
+                defaultRequest { header("Authorization", "Bearer $token") }
+                install(JsonFeature) { serializer = KotlinxSerializer(globalJson) }
+            }
         }
+        return userClient
+    }
+
+    private suspend fun embedSearch(type: String, link: String): PlatformQueryResult {
+        val folderType = when (type) {
+            "track" -> "Tracks"
+            "album" -> "Albums"
+            "playlist" -> "Playlists"
+            else -> throw SpotiFlyerException.LinkInvalid("Provide: Spotify, Type:$type -> Link:$link")
+        }
+        val result = embedClient.spotifyEmbed(type, link)
+        val subFolder = if (type == "track") "" else result.title
+        return PlatformQueryResult(
+            folderType = folderType,
+            subFolder = subFolder,
+            title = result.title,
+            coverUrl = result.coverUrl,
+            trackList = result.tracks.toTrackDetailsList(folderType, subFolder),
+            source = Source.Spotify
+        )
     }
 
     private suspend fun spotifySearch(
@@ -145,20 +182,21 @@ class SpotifyProvider(
                     val playlistObject = getPlaylist(link)
                     folderType = "Playlists"
                     subFolder = playlistObject.name.toString()
+                    val firstPage = playlistObject.items ?: playlistObject.tracks
                     val tempTrackList = mutableListOf<Track>().apply {
                         // Add Fetched Tracks
-                        playlistObject.tracks?.items?.mapNotNull(PlaylistTrack::track)?.let {
+                        firstPage?.items?.mapNotNull { it.item ?: it.track }?.let {
                             addAll(it)
                         }
                     }
 
                     // Check For More Tracks If available
-                    var moreTracksAvailable = !playlistObject.tracks?.next.isNullOrBlank()
+                    var moreTracksAvailable = !firstPage?.next.isNullOrBlank()
                     while (moreTracksAvailable) {
                         // Fetch Remaining Tracks
                         val moreTracks =
                             getPlaylistTracks(link, offset = tempTrackList.size)
-                        moreTracks.items?.mapNotNull(PlaylistTrack::track)?.let { remTracks ->
+                        moreTracks.items?.mapNotNull { it.item ?: it.track }?.let { remTracks ->
                             tempTrackList.addAll(remTracks)
                         }
                         moreTracksAvailable = !moreTracks.next.isNullOrBlank()

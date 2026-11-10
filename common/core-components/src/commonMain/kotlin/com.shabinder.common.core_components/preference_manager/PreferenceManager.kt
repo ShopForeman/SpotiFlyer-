@@ -53,6 +53,14 @@ class PreferenceManager(
     } ?: SpotifyCredentials()
     fun setSpotifyCredentials(credentials: SpotifyCredentials) = putString("spotifyCredentials", Json.encodeToString(SpotifyCredentials.serializer(), credentials))
 
+    /* SPOTIFY SIGN-IN (FlyerPlus) */
+    var spotifyRefreshToken: String?
+        get() = getStringOrNull("spotifyRefreshToken")
+        set(value) = if (value == null) remove("spotifyRefreshToken") else putString("spotifyRefreshToken", value)
+    var spotifyPkceVerifier: String?
+        get() = getStringOrNull("spotifyPkceVerifier")
+        set(value) = if (value == null) remove("spotifyPkceVerifier") else putString("spotifyPkceVerifier", value)
+
     /* OFFSET FOR WHEN TO ASK FOR SUPPORT */
     val getDonationOffset: Int get() = (getIntOrNull(DONATION_INTERVAL) ?: 3).also {
         // Min. Donation Asking Interval is `3`

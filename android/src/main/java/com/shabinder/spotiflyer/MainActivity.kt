@@ -336,6 +336,10 @@ class MainActivity : ComponentActivity() {
                     }
 
                     override fun openPlatform(packageID: String, platformLink: String) {
+                        if (packageID == com.shabinder.common.models.spotify.SPOTIFY_LOGIN_ACTION) {
+                            SpotifyLogin.start(this@MainActivity)
+                            return
+                        }
                         val manager: PackageManager = applicationContext.packageManager
                         try {
                             val intent = manager.getLaunchIntentForPackage(packageID)
@@ -433,6 +437,13 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleIntentFromExternalActivity(intent: Intent? = getIntent()) {
+        if (intent?.data?.scheme == "flyerplus") {
+            lifecycleScope.launch {
+                while (!this@MainActivity::rootComponent.isInitialized) delay(100)
+                SpotifyLogin.handleRedirect(intent)
+            }
+            return
+        }
         if (intent?.action == Intent.ACTION_SEND) {
             if ("text/plain" == intent.type) {
                 intent.getStringExtra(Intent.EXTRA_TEXT)?.let {

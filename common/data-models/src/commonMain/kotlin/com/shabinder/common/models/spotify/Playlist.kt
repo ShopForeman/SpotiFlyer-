@@ -33,6 +33,7 @@ data class Playlist(
     @SerialName("public")var is_public: Boolean? = null,
     var snapshot_id: String? = null,
     var tracks: PagingObjectPlaylistTrack? = null,
+    var items: PagingObjectPlaylistTrack? = null, // Spotify 2026 rename of `tracks`
     var type: String? = null,
     var uri: String? = null
 )

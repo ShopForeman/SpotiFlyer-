@@ -50,6 +50,9 @@ import com.arkivanov.decompose.extensions.compose.jetbrains.subscribeAsState
 import com.shabinder.common.models.Actions
 import com.shabinder.common.models.AudioQuality
 import com.shabinder.common.models.spotify.SpotifyCredentials
+import com.shabinder.common.models.spotify.SPOTIFY_LOGIN_ACTION
+import com.shabinder.common.models.spotify.SPOTIFY_REDIRECT_URI
+import com.shabinder.common.core_components.preference_manager.PreferenceManager
 import com.shabinder.common.preference.SpotiFlyerPreference
 import com.shabinder.common.translations.Strings
 import com.shabinder.common.uikit.configurations.SpotiFlyerShapes
@@ -148,7 +151,11 @@ fun SpotiFlyerPreferenceContent(component: SpotiFlyerPreference) {
                 SettingsRow(
                     icon = rememberVectorPainter(Icons.Rounded.ManageAccounts),
                     title = Strings.spotifyCreds(),
-                    value = if (model.spotifyCredentials == SpotifyCredentials()) Strings.defaultString() else Strings.userSet(),
+                    value = when {
+                        PreferenceManager.instance.spotifyRefreshToken != null -> "Signed in to Spotify"
+                        model.spotifyCredentials == SpotifyCredentials() -> Strings.defaultString()
+                        else -> Strings.userSet()
+                    },
                     contentEnd = {
                         Spacer(Modifier.weight(1f))
                         Icon(
@@ -180,10 +187,32 @@ fun SpotiFlyerPreferenceContent(component: SpotiFlyerPreference) {
 
                     Spacer(Modifier.padding(vertical = 4.dp))
 
+                    Text(
+                        "Optional: sign in to load your own and collaborative playlists through Spotify's API. " +
+                            "Needs your own Client ID with redirect URI $SPOTIFY_REDIRECT_URI. Other links work without signing in.",
+                        style = SpotiFlyerTypography.caption
+                    )
+
+                    Spacer(Modifier.padding(vertical = 4.dp))
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceEvenly
                     ) {
+                        TextButton(
+                            onClick = {
+                                component.updateSpotifyCredentials(SpotifyCredentials(clientID, clientSecret))
+                                Actions.instance.openPlatform(SPOTIFY_LOGIN_ACTION, "")
+                                save()
+                            },
+                            Modifier.padding(bottom = 8.dp, start = 8.dp, end = 8.dp).wrapContentWidth()
+                                .background(colorPrimary, shape = SpotiFlyerShapes.medium)
+                                .padding(horizontal = 4.dp),
+                            shape = SpotiFlyerShapes.small
+                        ) {
+                            Text("Sign in", color = Color.Black, fontSize = 16.sp, textAlign = TextAlign.Center)
+                        }
+
                         TextButton(
                             onClick = {
                                 component.updateSpotifyCredentials(
@@ -213,6 +242,7 @@ fun SpotiFlyerPreferenceContent(component: SpotiFlyerPreference) {
                                 component.updateSpotifyCredentials(
                                     SpotifyCredentials()
                                 )
+                                PreferenceManager.instance.spotifyRefreshToken = null
                                 Actions.instance.showPopUpMessage(Strings.requestAppRestart())
                                 save()
                             },

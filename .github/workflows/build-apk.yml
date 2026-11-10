@@ -26,6 +26,8 @@ jobs:
           echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
           printf 'storeFileDir=%s\nstorePassword=%s\nkeyAlias=flyerplus\nkeyPassword=%s\n' \
             "$RUNNER_TEMP/release.jks" "$KEYSTORE_PASSWORD" "$KEYSTORE_PASSWORD" >> local.properties
+      - name: Check Spotify page parsing
+        run: ./gradlew --no-daemon :common:providers:desktopTest --tests '*SpotifyEmbedTest*' -i | grep -E "tracks, first|PASSED|FAILED|BUILD"
       - name: Build
         run: ./gradlew --no-daemon --stacktrace :android:assembleRelease
       - name: Rename APK

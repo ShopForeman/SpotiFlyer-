@@ -45,7 +45,7 @@ interface SpotifyRequests {
         offset: Int = 0,
         limit: Int = 100
     ): PagingObjectPlaylistTrack {
-        return httpClient.get("$BASE_URL/playlists/$playlistID/tracks?offset=$offset&limit=$limit")
+        return httpClient.get("$BASE_URL/playlists/$playlistID/items?offset=$offset&limit=$limit")
     }
 
     suspend fun getTrack(id: String?): Track {

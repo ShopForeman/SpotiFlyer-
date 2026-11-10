@@ -23,5 +23,6 @@ data class PlaylistTrack(
     var added_at: String? = null,
     var added_by: UserPublic? = null,
     var track: Track? = null,
+    var item: Track? = null, // Spotify 2026 rename of `track`
     var is_local: Boolean? = null
 )
